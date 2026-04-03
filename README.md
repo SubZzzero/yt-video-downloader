@@ -1,5 +1,7 @@
 # ytdownloader
 
+![Main page](img/main.png)
+
 A local web tool to download videos by URL using `yt-dlp` with selectable quality and best available audio.
 
 ## MVP Features

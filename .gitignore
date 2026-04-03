@@ -1,0 +1,19 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+
+# IDE and local settings
+.vscode/
+.idea/
+
+# Runtime download artifacts
+downloads/*
+
+# Project planning and internal docs (exclude from GitHub)
+AGENTS.md
+plans/
+docs/
+app/README.md
+web/README.md
+downloads/README.md

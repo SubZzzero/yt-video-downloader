@@ -1,16 +1,16 @@
 # ytdownloader
 
-Локальный веб-инструмент для скачивания видео по URL через `yt-dlp` без перекодировки.
+A local web tool to download videos by URL using `yt-dlp` without transcoding.
 
-## Что реализовано в MVP
-- Веб-страница с полем URL и кнопкой скачивания
-- API запуска загрузки и проверки статуса
-- Список скачанных файлов из папки `downloads/`
-- Один локальный процесс на Flask
+## MVP Features
+- Web page with URL input and download button
+- API for starting downloads and checking status
+- List of downloaded files from the `downloads/` folder
+- Single local Flask process
 
-## Быстрый старт
-1. Клонируйте репозиторий.
-2. Установите зависимости:
+## Quick Start
+1. Clone the repository.
+2. Install dependencies:
 
    ```bash
    python3 -m venv .venv
@@ -18,17 +18,17 @@
    pip install -r requirements.txt
    ```
 
-3. Запустите приложение:
+3. Run the app:
 
    ```bash
-   python run.py
+   python3 run.py
    ```
 
-4. Откройте в браузере:
+4. Open in browser:
 
    ```
    http://127.0.0.1:5000
    ```
 
-## Legacy-скрипт
-Файл `main.py` оставлен как CLI-обертка и теперь тоже выполняет только скачивание без перекодировки.
+## Legacy Script
+`main.py` is kept as a CLI wrapper and now also performs download-only behavior (no transcoding).

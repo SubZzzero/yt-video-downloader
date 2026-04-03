@@ -1,0 +1,73 @@
+:root {
+    color-scheme: dark;
+}
+
+body {
+    margin: 0;
+    font-family: Inter, system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+.container {
+    max-width: 840px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+form {
+    display: grid;
+    gap: 10px;
+}
+
+input,
+button {
+    border-radius: 8px;
+    border: 1px solid #475569;
+    padding: 10px;
+    font-size: 14px;
+}
+
+input {
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+button {
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+}
+
+button:hover {
+    background: #1d4ed8;
+}
+
+#status {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.files-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#files {
+    margin: 0;
+    padding-left: 16px;
+}
+
+#files li {
+    margin: 6px 0;
+}

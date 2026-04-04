@@ -1,37 +1,50 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>YT Downloader</title>
-    <link rel="stylesheet" href="/web/styles.css" />
-  </head>
-  <body>
-    <main class="container">
-      <h1>YT Downloader (MVP)</h1>
 
-      <section class="card">
-        <form id="download-form">
-          <label for="url">Video URL</label>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YT Downloader</title>
+  <link rel="stylesheet" href="/web/styles.css" />
+</head>
+
+<body>
+  <main class="container">
+    <h1>YT Downloader (MVP)</h1>
+
+    <section class="card">
+      <form id="download-form">
+        <label for="url">Video URL</label>
+        <div class="url-row">
           <input id="url" name="url" type="url" placeholder="https://..." required />
-          <button type="submit">Download</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <h2>Status</h2>
-        <pre id="status">Waiting for start...</pre>
-      </section>
-
-      <section class="card">
-        <div class="files-header">
-          <h2>Downloaded Files</h2>
-          <button id="refresh-files" type="button">Refresh</button>
+          <button id="load-formats" type="button">Load qualities</button>
         </div>
-        <ul id="files"></ul>
-      </section>
-    </main>
 
-    <script src="/web/app.js"></script>
-  </body>
+        <label for="quality">Quality (p)</label>
+        <select id="quality" name="quality" required disabled>
+          <option value="">Load qualities first</option>
+        </select>
+        <small id="formats-status" class="hint">Enter URL and load available qualities (video + best audio)</small>
+
+        <button id="download-btn" type="submit" disabled>Download</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Status</h2>
+      <pre id="status">Waiting for start...</pre>
+    </section>
+
+    <section class="card">
+      <div class="files-header">
+        <h2>Downloaded Files</h2>
+        <button id="refresh-files" type="button">Refresh</button>
+      </div>
+      <ul id="files"></ul>
+    </section>
+  </main>
+
+  <script src="/web/app.js"></script>
+</body>
+
 </html>

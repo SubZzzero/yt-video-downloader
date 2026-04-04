@@ -29,14 +29,16 @@ form {
 }
 
 input,
-button {
+button,
+select {
     border-radius: 8px;
     border: 1px solid #475569;
     padding: 10px;
     font-size: 14px;
 }
 
-input {
+input,
+select {
     background: #0f172a;
     color: #e2e8f0;
 }
@@ -50,6 +52,28 @@ button {
 
 button:hover {
     background: #1d4ed8;
+}
+
+.url-row {
+    display: flex;
+    gap: 10px;
+}
+
+.url-row input {
+    flex: 1;
+}
+
+.url-row button {
+    white-space: nowrap;
+}
+
+.hint {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.hint.error {
+    color: #fca5a5;
 }
 
 #status {

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from .downloader import list_video_formats
 from .task_manager import create_task, get_task, start_download_task
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,14 +47,29 @@ def create_app() -> Flask:
     def api_download() -> object:
         payload = request.get_json(silent=True) or {}
         url = str(payload.get("url", "")).strip()
+        format_id_raw = str(payload.get("format_id", "")).strip()
+        format_id = format_id_raw or None
 
         if not url:
             return jsonify({"error": "The url field is required"}), 400
 
-        task_id = create_task(url)
-        start_download_task(task_id=task_id, url=url, download_dir=DOWNLOADS_DIR)
+        task_id = create_task(url=url, format_id=format_id)
+        start_download_task(task_id=task_id, url=url, download_dir=DOWNLOADS_DIR, format_id=format_id)
 
-        return jsonify({"task_id": task_id, "status": "queued"}), 202
+        return jsonify({"task_id": task_id, "status": "queued", "format_id": format_id}), 202
+
+    @app.get("/api/formats")
+    def api_formats() -> object:
+        url = str(request.args.get("url", "")).strip()
+        if not url:
+            return jsonify({"error": "The url query parameter is required"}), 400
+
+        try:
+            formats_payload = list_video_formats(video_url=url)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": f"Failed to fetch formats: {exc}"}), 400
+
+        return jsonify(formats_payload)
 
     @app.get("/api/status/<task_id>")
     def api_status(task_id: str) -> object:

@@ -1,10 +1,11 @@
-# Youtube Video Downloader
+# yt-dlp YouTube Video Downloader Web UI (Flask)
+
+A simple YouTube video downloader web UI built with Flask using yt-dlp.  
+Download YouTube videos in your browser by URL with selectable quality and best available audio — no transcoding required.
 
 ![Main page](img/main.png)
 
-A local web tool to download videos by URL using `yt-dlp` with selectable quality and best available audio.
-
-## MVP Features
+## Features
 - Web page with URL input and download button
 - Dynamic quality selection by available resolutions (e.g. 360p, 720p, 1080p)
 - Download of selected video quality with best available audio track

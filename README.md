@@ -1,4 +1,4 @@
-# ytdownloader
+# Youtube Video Downloader
 
 ![Main page](img/main.png)
 

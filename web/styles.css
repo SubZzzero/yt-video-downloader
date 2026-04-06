@@ -76,9 +76,101 @@ button:hover {
     color: #fca5a5;
 }
 
-#status {
+.status-card {
+    transition: border-color 0.2s ease;
+}
+
+.status-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.status-body {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#status-message {
+    margin: 0;
+}
+
+#status-meta {
+    display: block;
+    margin-top: 8px;
+}
+
+.spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #64748b;
+    border-top-color: #e2e8f0;
+    animation: spin 0.9s linear infinite;
+    flex: 0 0 auto;
+}
+
+.status-details {
+    margin-top: 12px;
+}
+
+#status-raw {
     white-space: pre-wrap;
     word-break: break-word;
+    background: #0b1220;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px;
+    margin: 8px 0 0;
+}
+
+.status-card[data-state="idle"] .status-badge {
+    background: #334155;
+    border-color: #475569;
+    color: #cbd5e1;
+}
+
+.status-card[data-state="queued"] .status-badge,
+.status-card[data-state="downloading"] .status-badge {
+    background: #1e3a8a;
+    border-color: #2563eb;
+    color: #bfdbfe;
+}
+
+.status-card[data-state="completed"] .status-badge {
+    background: #14532d;
+    border-color: #22c55e;
+    color: #bbf7d0;
+}
+
+.status-card[data-state="failed"] .status-badge {
+    background: #7f1d1d;
+    border-color: #ef4444;
+    color: #fecaca;
+}
+
+.status-card[data-state="failed"] #status-message {
+    color: #fecaca;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .files-header {

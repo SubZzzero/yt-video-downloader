@@ -4,15 +4,101 @@ const loadFormatsBtn = document.getElementById("load-formats");
 const qualitySelect = document.getElementById("quality");
 const formatsStatusEl = document.getElementById("formats-status");
 const downloadBtn = document.getElementById("download-btn");
-const statusEl = document.getElementById("status");
+const statusCardEl = document.getElementById("status-card");
+const statusPhaseEl = document.getElementById("status-phase");
+const statusSpinnerEl = document.getElementById("status-spinner");
+const statusMessageEl = document.getElementById("status-message");
+const statusMetaEl = document.getElementById("status-meta");
+const statusRawEl = document.getElementById("status-raw");
 const filesEl = document.getElementById("files");
 const refreshBtn = document.getElementById("refresh-files");
 
 let pollTimer = null;
 let loadedFormatsUrl = "";
 
+function formatTime(isoTime) {
+    if (!isoTime) {
+        return "";
+    }
+
+    const parsed = new Date(isoTime);
+    if (Number.isNaN(parsed.getTime())) {
+        return "";
+    }
+
+    return parsed.toLocaleTimeString();
+}
+
+function mapStatus(payload) {
+    const status = String(payload?.status || "").toLowerCase();
+    const hasError = Boolean(payload?.error);
+    const explicitMessage = String(payload?.message || "").trim();
+
+    if (status === "queued") {
+        return {
+            state: "queued",
+            phase: "Queued",
+            message: explicitMessage || "Request accepted. Preparing download...",
+            loading: true,
+        };
+    }
+
+    if (status === "downloading") {
+        return {
+            state: "downloading",
+            phase: "Downloading",
+            message: explicitMessage || "Downloading video and best available audio...",
+            loading: true,
+        };
+    }
+
+    if (status === "completed") {
+        const fileName = payload?.result?.file_name;
+        return {
+            state: "completed",
+            phase: "Completed",
+            message: fileName ? `Saved: ${fileName}` : "Download completed successfully.",
+            loading: false,
+        };
+    }
+
+    if (status === "failed" || hasError) {
+        return {
+            state: "failed",
+            phase: "Failed",
+            message: payload?.error || explicitMessage || "Download failed.",
+            loading: false,
+        };
+    }
+
+    return {
+        state: "idle",
+        phase: "Idle",
+        message: explicitMessage || "Waiting for start...",
+        loading: false,
+    };
+}
+
 function setStatus(data) {
-    statusEl.textContent = JSON.stringify(data, null, 2);
+    const payload = data && typeof data === "object" ? data : { message: String(data) };
+    const mapped = mapStatus(payload);
+
+    statusCardEl.dataset.state = mapped.state;
+    statusPhaseEl.textContent = mapped.phase;
+    statusMessageEl.textContent = mapped.message;
+    statusSpinnerEl.hidden = !mapped.loading;
+
+    const meta = [];
+    if (payload.task_id) {
+        meta.push(`Task: ${payload.task_id}`);
+    }
+    const updated = formatTime(payload.updated_at || payload.created_at);
+    if (updated) {
+        meta.push(`Updated: ${updated}`);
+    }
+    statusMetaEl.textContent = meta.join(" • ");
+
+    statusRawEl.textContent = JSON.stringify(payload, null, 2);
 }
 
 function setFormatsStatus(message, isError = false) {
@@ -100,7 +186,7 @@ async function loadFormats() {
         qualitySelect.selectedIndex = 1;
         downloadBtn.disabled = false;
         loadedFormatsUrl = url;
-        setFormatsStatus(`Loaded ${formats.length} quality options (video + best audio)`);
+        setFormatsStatus(`Loaded ${formats.length} quality options`);
     } catch (error) {
         resetFormats();
         setFormatsStatus(String(error), true);
@@ -136,15 +222,24 @@ async function pollStatus(taskId) {
     }
 
     pollTimer = setInterval(async () => {
-        const response = await fetch(`/api/status/${taskId}`);
-        const data = await response.json();
-        setStatus(data);
+        try {
+            const response = await fetch(`/api/status/${taskId}`);
+            const data = await response.json();
+            setStatus(data);
 
-        if (data.status === "completed" || data.status === "failed") {
-            clearInterval(pollTimer);
-            pollTimer = null;
-            await loadFiles();
-            downloadBtn.disabled = !qualitySelect.value;
+            if (data.status === "completed" || data.status === "failed") {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                await loadFiles();
+                downloadBtn.disabled = !qualitySelect.value;
+            }
+        } catch (error) {
+            setStatus({
+                status: "downloading",
+                task_id: taskId,
+                message: "Download is still running. Waiting for next status update...",
+                warning: String(error),
+            });
         }
     }, 1500);
 }
@@ -153,31 +248,36 @@ form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const url = urlInput.value.trim();
     if (!url) {
-        setStatus({ error: "Enter a URL" });
+        setStatus({ status: "failed", error: "Enter a URL" });
         return;
     }
 
     const formatId = qualitySelect.value;
     if (!formatId || loadedFormatsUrl !== url) {
-        setStatus({ error: "Load qualities and choose one option before downloading" });
+        setStatus({ status: "failed", error: "Load qualities and choose one option before downloading" });
         return;
     }
 
-    setStatus({ status: "Sending request..." });
+    setStatus({ status: "queued", message: "Sending download request..." });
     downloadBtn.disabled = true;
 
-    const response = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, format_id: formatId }),
-    });
+    try {
+        const response = await fetch("/api/download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url, format_id: formatId }),
+        });
 
-    const data = await response.json();
-    setStatus(data);
+        const data = await response.json();
+        setStatus(data);
 
-    if (response.ok && data.task_id) {
-        await pollStatus(data.task_id);
-    } else {
+        if (response.ok && data.task_id) {
+            await pollStatus(data.task_id);
+        } else {
+            downloadBtn.disabled = false;
+        }
+    } catch (error) {
+        setStatus({ status: "failed", error: String(error), message: "Failed to start download" });
         downloadBtn.disabled = false;
     }
 });
@@ -201,7 +301,8 @@ qualitySelect.addEventListener("change", () => {
 });
 
 refreshBtn.addEventListener("click", () => {
-    loadFiles().catch((error) => setStatus({ error: String(error) }));
+    loadFiles().catch((error) => setStatus({ status: "failed", error: String(error) }));
 });
 
-loadFiles().catch((error) => setStatus({ error: String(error) }));
+setStatus({ status: "idle", message: "Waiting for start..." });
+loadFiles().catch((error) => setStatus({ status: "failed", error: String(error) }));

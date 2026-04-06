@@ -10,7 +10,7 @@
 
 <body>
   <main class="container">
-    <h1>YT Downloader (MVP)</h1>
+    <h1>YT Downloader</h1>
 
     <section class="card">
       <form id="download-form">
@@ -24,15 +24,30 @@
         <select id="quality" name="quality" required disabled>
           <option value="">Load qualities first</option>
         </select>
-        <small id="formats-status" class="hint">Enter URL and load available qualities (video + best audio)</small>
+        <small id="formats-status" class="hint">Enter URL and load available qualities</small>
 
         <button id="download-btn" type="submit" disabled>Download</button>
       </form>
     </section>
 
-    <section class="card">
-      <h2>Status</h2>
-      <pre id="status">Waiting for start...</pre>
+    <section class="card status-card" id="status-card" data-state="idle">
+      <div class="status-header-row">
+        <h2>Status</h2>
+        <span id="status-phase" class="status-badge">Idle</span>
+      </div>
+
+      <div class="status-body">
+        <span id="status-spinner" class="spinner" hidden></span>
+        <p id="status-message">Waiting for start...</p>
+      </div>
+      <small id="status-meta" class="hint"></small>
+
+      <details class="status-details">
+        <summary>Technical details</summary>
+        <pre id="status-raw">{
+  "status": "idle"
+}</pre>
+      </details>
     </section>
 
     <section class="card">

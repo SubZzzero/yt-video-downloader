@@ -56,7 +56,14 @@ def create_app() -> Flask:
         task_id = create_task(url=url, format_id=format_id)
         start_download_task(task_id=task_id, url=url, download_dir=DOWNLOADS_DIR, format_id=format_id)
 
-        return jsonify({"task_id": task_id, "status": "queued", "format_id": format_id}), 202
+        return jsonify(
+            {
+                "task_id": task_id,
+                "status": "queued",
+                "format_id": format_id,
+                "audio_processing": "premiere_safe_aac_48k_stereo",
+            }
+        ), 202
 
     @app.get("/api/formats")
     def api_formats() -> object:

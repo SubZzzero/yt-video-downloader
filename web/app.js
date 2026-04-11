@@ -54,10 +54,21 @@ function mapStatus(payload) {
 
     if (status === "completed") {
         const fileName = payload?.result?.file_name;
+        const premiereSafe = Boolean(payload?.result?.premiere_safe_audio);
+        const codec = String(payload?.result?.audio_codec || "").toUpperCase();
+        const sampleRate = payload?.result?.audio_sample_rate;
+        const channels = payload?.result?.audio_channels;
+
+        const compatNote = premiereSafe
+            ? ` Premiere-safe audio: ${codec || "AAC"}${sampleRate ? ` ${sampleRate}Hz` : ""}${channels ? ` ${channels}ch` : ""}.`
+            : "";
+
         return {
             state: "completed",
             phase: "Completed",
-            message: fileName ? `Saved: ${fileName}` : "Download completed successfully.",
+            message: fileName
+                ? `Saved: ${fileName}.${compatNote}`
+                : `Download completed successfully.${compatNote}`,
             loading: false,
         };
     }

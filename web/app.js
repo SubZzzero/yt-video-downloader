@@ -47,7 +47,7 @@ function mapStatus(payload) {
         return {
             state: "downloading",
             phase: "Downloading",
-            message: explicitMessage || "Downloading video and best available audio...",
+            message: explicitMessage || "Downloading video...",
             loading: true,
         };
     }

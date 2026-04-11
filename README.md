@@ -14,26 +14,53 @@ Download YouTube videos in your browser by URL with selectable quality and best 
 - Single local Flask process
 
 ## Quick Start
-1. Clone the repository.
-2. Install dependencies:
 
+### Requirements
+- Python 3.10+ is required (must be available in PATH)
+- `pip` for installing dependencies
+- `ffmpeg` for best quality video+audio merge
+
+1. Clone the repository.
+
+2. Create virtual environment and install dependencies.
+
+   Linux/macOS:
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
 
-3. Install ffmpeg (required for best quality video+audio merge):
+   Windows (PowerShell):
+   ```powershell
+   py -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
 
+3. Install ffmpeg.
+
+   Linux (APT):
    ```bash
    sudo apt update
    sudo apt install -y ffmpeg
    ```
 
-4. Run the app:
+   Windows (winget):
+   ```powershell
+   winget install --id Gyan.FFmpeg -e
+   ```
 
+4. Run the app.
+
+   Linux/macOS:
    ```bash
    python3 run.py
+   ```
+
+   Windows:
+   ```powershell
+   py run.py
    ```
 
 5. Open in browser:

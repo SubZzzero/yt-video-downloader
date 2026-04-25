@@ -9,6 +9,7 @@ Download YouTube videos in your browser by URL with selectable quality and best 
 - Web page with URL input and download button
 - Dynamic quality selection by available resolutions (e.g. 360p, 720p, 1080p)
 - Download of selected video quality with best available audio track
+- Audio-only download to MP3 with selectable bitrate (192 or 320 kbps)
 - API for starting downloads and checking status
 - List of downloaded files from the `downloads/` folder
 - Single local Flask process

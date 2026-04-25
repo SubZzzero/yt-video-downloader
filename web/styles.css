@@ -76,6 +76,27 @@ button:hover {
     color: #fca5a5;
 }
 
+.checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    user-select: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: #2563eb;
+    cursor: pointer;
+}
+
+.audio-quality-group {
+    display: grid;
+    gap: 8px;
+}
+
 .status-card {
     transition: border-color 0.2s ease;
 }

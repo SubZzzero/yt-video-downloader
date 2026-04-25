@@ -26,6 +26,19 @@
         </select>
         <small id="formats-status" class="hint">Enter URL and load available qualities</small>
 
+        <label class="checkbox-row" for="audio-only">
+          <input id="audio-only" name="audio_only" type="checkbox" />
+          <span>Download audio only</span>
+        </label>
+
+        <div id="audio-quality-group" class="audio-quality-group" hidden>
+          <label for="audio-bitrate">MP3 quality</label>
+          <select id="audio-bitrate" name="audio_bitrate">
+            <option value="320" selected>320 kbps</option>
+            <option value="192">192 kbps</option>
+          </select>
+        </div>
+
         <button id="download-btn" type="submit" disabled>Download</button>
       </form>
     </section>

@@ -8,6 +8,9 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 
+ALLOWED_AUDIO_BITRATES = {192, 320}
+
+
 def list_video_formats(video_url: str) -> dict[str, Any]:
     """Return downloadable quality options grouped by resolution height."""
     ydl_opts: dict[str, Any] = {
@@ -193,9 +196,96 @@ def _apply_premiere_safe_audio(file_path: Path) -> dict[str, Any]:
     }
 
 
-def download_video(video_url: str, download_dir: Path, format_id: str | None = None) -> dict[str, Any]:
+def _resolve_audio_track_file(info: dict[str, Any], fallback_path: Path, download_dir: Path) -> Path:
+    """Resolve the final MP3 path for audio-only downloads."""
+    if fallback_path.suffix.lower() == ".mp3" and fallback_path.exists():
+        return fallback_path
+
+    files = [item for item in download_dir.iterdir() if item.is_file() and item.suffix.lower() == ".mp3"]
+    video_id = str(info.get("id") or "").strip()
+    if video_id:
+        by_id = [item for item in files if f"[{video_id}]" in item.name]
+        if by_id:
+            return sorted(by_id, key=lambda path: path.stat().st_mtime, reverse=True)[0]
+
+    if files:
+        return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)[0]
+
+    raise RuntimeError("Audio track conversion completed, but MP3 file was not found")
+
+
+def _normalize_audio_bitrate(audio_bitrate_kbps: int | None) -> int:
+    if audio_bitrate_kbps is None:
+        return 320
+
+    bitrate = int(audio_bitrate_kbps)
+    if bitrate not in ALLOWED_AUDIO_BITRATES:
+        raise RuntimeError("Audio bitrate must be one of: 192 or 320 kbps")
+    return bitrate
+
+
+def _download_audio_track(video_url: str, download_dir: Path, audio_bitrate_kbps: int | None) -> dict[str, Any]:
+    """Download best available audio and convert to MP3."""
+    bitrate = _normalize_audio_bitrate(audio_bitrate_kbps)
+
+    ydl_opts: dict[str, Any] = {
+        "outtmpl": str(download_dir / "%(title).150B [%(id)s].%(ext)s"),
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "restrictfilenames": False,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": str(bitrate),
+            }
+        ],
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            prepared_name = ydl.prepare_filename(info)
+    except DownloadError as exc:
+        message = str(exc)
+        if "ffmpeg" in message.lower():
+            raise RuntimeError("FFmpeg is required for MP3 conversion. Install ffmpeg and retry.") from exc
+        raise RuntimeError(message) from exc
+
+    resolved_path = _resolve_downloaded_file(info=info, prepared_name=prepared_name, download_dir=download_dir)
+    mp3_path = _resolve_audio_track_file(info=info, fallback_path=resolved_path, download_dir=download_dir)
+
+    return {
+        "id": info.get("id"),
+        "title": info.get("title"),
+        "webpage_url": info.get("webpage_url") or video_url,
+        "file_path": str(mp3_path.resolve()),
+        "file_name": mp3_path.name,
+        "format_id": info.get("format_id"),
+        "audio_only": True,
+        "audio_format": "mp3",
+        "audio_bitrate_kbps": bitrate,
+    }
+
+
+def download_video(
+    video_url: str,
+    download_dir: Path,
+    format_id: str | None = None,
+    audio_only: bool = False,
+    audio_bitrate_kbps: int | None = None,
+) -> dict[str, Any]:
     """Download a single video and prefer selected quality + best available audio."""
     download_dir.mkdir(parents=True, exist_ok=True)
+
+    if audio_only:
+        return _download_audio_track(
+            video_url=video_url,
+            download_dir=download_dir,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+        )
 
     selected_format = (
         f"{format_id}+bestaudio/{format_id}/best"
@@ -238,4 +328,5 @@ def download_video(video_url: str, download_dir: Path, format_id: str | None = N
         "audio_profile": normalized["audio_profile"],
         "audio_sample_rate": normalized["audio_sample_rate"],
         "audio_channels": normalized["audio_channels"],
+        "audio_only": False,
     }

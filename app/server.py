@@ -12,6 +12,23 @@ WEB_DIR = BASE_DIR / "web"
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 
 
+def _parse_audio_only(raw_value: object) -> bool:
+    if isinstance(raw_value, bool):
+        return raw_value
+    if isinstance(raw_value, str):
+        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _parse_audio_bitrate(raw_value: object) -> int | None:
+    if raw_value in (None, ""):
+        return None
+    try:
+        return int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        raise ValueError("audio_bitrate_kbps must be an integer (192 or 320)")
+
+
 def _list_downloaded_files() -> list[dict[str, object]]:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     items: list[dict[str, object]] = []
@@ -49,19 +66,45 @@ def create_app() -> Flask:
         url = str(payload.get("url", "")).strip()
         format_id_raw = str(payload.get("format_id", "")).strip()
         format_id = format_id_raw or None
+        audio_only = _parse_audio_only(payload.get("audio_only"))
+
+        try:
+            audio_bitrate_kbps = _parse_audio_bitrate(payload.get("audio_bitrate_kbps"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
         if not url:
             return jsonify({"error": "The url field is required"}), 400
 
-        task_id = create_task(url=url, format_id=format_id)
-        start_download_task(task_id=task_id, url=url, download_dir=DOWNLOADS_DIR, format_id=format_id)
+        if audio_only and audio_bitrate_kbps not in (None, 192, 320):
+            return jsonify({"error": "audio_bitrate_kbps must be 192 or 320 for audio-only downloads"}), 400
+
+        if not audio_only:
+            audio_bitrate_kbps = None
+
+        task_id = create_task(
+            url=url,
+            format_id=format_id,
+            audio_only=audio_only,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+        )
+        start_download_task(
+            task_id=task_id,
+            url=url,
+            download_dir=DOWNLOADS_DIR,
+            format_id=format_id,
+            audio_only=audio_only,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+        )
 
         return jsonify(
             {
                 "task_id": task_id,
                 "status": "queued",
                 "format_id": format_id,
-                "audio_processing": "premiere_safe_aac_48k_stereo",
+                "audio_only": audio_only,
+                "audio_bitrate_kbps": audio_bitrate_kbps,
+                "audio_processing": "mp3_extract" if audio_only else "premiere_safe_aac_48k_stereo",
             }
         ), 202
 

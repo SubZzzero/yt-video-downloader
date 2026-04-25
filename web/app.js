@@ -2,6 +2,9 @@ const form = document.getElementById("download-form");
 const urlInput = document.getElementById("url");
 const loadFormatsBtn = document.getElementById("load-formats");
 const qualitySelect = document.getElementById("quality");
+const audioOnlyCheckbox = document.getElementById("audio-only");
+const audioQualityGroup = document.getElementById("audio-quality-group");
+const audioBitrateSelect = document.getElementById("audio-bitrate");
 const formatsStatusEl = document.getElementById("formats-status");
 const downloadBtn = document.getElementById("download-btn");
 const statusCardEl = document.getElementById("status-card");
@@ -15,6 +18,44 @@ const refreshBtn = document.getElementById("refresh-files");
 
 let pollTimer = null;
 let loadedFormatsUrl = "";
+
+function isAudioOnlyMode() {
+    return Boolean(audioOnlyCheckbox?.checked);
+}
+
+function updateDownloadAvailability() {
+    const hasUrl = Boolean(urlInput.value.trim());
+    if (!hasUrl) {
+        downloadBtn.disabled = true;
+        return;
+    }
+
+    if (isAudioOnlyMode()) {
+        downloadBtn.disabled = false;
+        return;
+    }
+
+    downloadBtn.disabled = !qualitySelect.value;
+}
+
+function syncAudioOnlyUiState() {
+    const audioOnly = isAudioOnlyMode();
+    audioQualityGroup.hidden = !audioOnly;
+
+    qualitySelect.required = !audioOnly;
+    qualitySelect.disabled = audioOnly || qualitySelect.options.length <= 1;
+    loadFormatsBtn.disabled = audioOnly;
+
+    if (audioOnly) {
+        setFormatsStatus("Audio-only mode enabled. Video quality selection is not required.");
+    } else if (loadedFormatsUrl === urlInput.value.trim() && qualitySelect.options.length > 1) {
+        setFormatsStatus(`Loaded ${qualitySelect.options.length - 1} quality options`);
+    } else {
+        setFormatsStatus("Enter URL and load available qualities");
+    }
+
+    updateDownloadAvailability();
+}
 
 function formatTime(isoTime) {
     if (!isoTime) {
@@ -33,12 +74,13 @@ function mapStatus(payload) {
     const status = String(payload?.status || "").toLowerCase();
     const hasError = Boolean(payload?.error);
     const explicitMessage = String(payload?.message || "").trim();
+    const audioOnly = Boolean(payload?.audio_only || payload?.result?.audio_only);
 
     if (status === "queued") {
         return {
             state: "queued",
             phase: "Queued",
-            message: explicitMessage || "Request accepted. Preparing download...",
+            message: explicitMessage || (audioOnly ? "Request accepted. Preparing audio extraction..." : "Request accepted. Preparing download..."),
             loading: true,
         };
     }
@@ -47,13 +89,27 @@ function mapStatus(payload) {
         return {
             state: "downloading",
             phase: "Downloading",
-            message: explicitMessage || "Downloading video...",
+            message: explicitMessage || (audioOnly ? "Downloading audio track..." : "Downloading video..."),
             loading: true,
         };
     }
 
     if (status === "completed") {
+        const audioOnlyResult = Boolean(payload?.result?.audio_only);
         const fileName = payload?.result?.file_name;
+
+        if (audioOnlyResult) {
+            const bitrate = payload?.result?.audio_bitrate_kbps;
+            return {
+                state: "completed",
+                phase: "Completed",
+                message: fileName
+                    ? `Saved track: ${fileName}${bitrate ? ` (${bitrate} kbps MP3).` : "."}`
+                    : `Audio track saved successfully${bitrate ? ` (${bitrate} kbps MP3).` : "."}`,
+                loading: false,
+            };
+        }
+
         const premiereSafe = Boolean(payload?.result?.premiere_safe_audio);
         const codec = String(payload?.result?.audio_codec || "").toUpperCase();
         const sampleRate = payload?.result?.audio_sample_rate;
@@ -149,11 +205,17 @@ function formatLabel(format) {
 function resetFormats() {
     qualitySelect.innerHTML = "<option value=\"\">Load qualities first</option>";
     qualitySelect.disabled = true;
-    downloadBtn.disabled = true;
+    qualitySelect.required = !isAudioOnlyMode();
     loadedFormatsUrl = "";
+    updateDownloadAvailability();
 }
 
 async function loadFormats() {
+    if (isAudioOnlyMode()) {
+        setFormatsStatus("Audio-only mode enabled. Video quality selection is not required.");
+        return;
+    }
+
     const url = urlInput.value.trim();
     if (!url) {
         setFormatsStatus("Enter URL first", true);
@@ -164,7 +226,7 @@ async function loadFormats() {
     setFormatsStatus("Loading available qualities...");
     loadFormatsBtn.disabled = true;
     qualitySelect.disabled = true;
-    downloadBtn.disabled = true;
+    updateDownloadAvailability();
 
     try {
         const response = await fetch(`/api/formats?url=${encodeURIComponent(url)}`);
@@ -195,15 +257,15 @@ async function loadFormats() {
 
         qualitySelect.disabled = false;
         qualitySelect.selectedIndex = 1;
-        downloadBtn.disabled = false;
         loadedFormatsUrl = url;
         setFormatsStatus(`Loaded ${formats.length} quality options`);
+        updateDownloadAvailability();
     } catch (error) {
         resetFormats();
         setFormatsStatus(String(error), true);
         setStatus({ error: String(error) });
     } finally {
-        loadFormatsBtn.disabled = false;
+        loadFormatsBtn.disabled = isAudioOnlyMode();
     }
 }
 
@@ -242,7 +304,7 @@ async function pollStatus(taskId) {
                 clearInterval(pollTimer);
                 pollTimer = null;
                 await loadFiles();
-                downloadBtn.disabled = !qualitySelect.value;
+                updateDownloadAvailability();
             }
         } catch (error) {
             setStatus({
@@ -258,25 +320,41 @@ async function pollStatus(taskId) {
 form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const url = urlInput.value.trim();
+    const audioOnly = isAudioOnlyMode();
     if (!url) {
         setStatus({ status: "failed", error: "Enter a URL" });
         return;
     }
 
+    const audioBitrateKbps = Number(audioBitrateSelect.value || 320);
+    if (audioOnly && ![192, 320].includes(audioBitrateKbps)) {
+        setStatus({ status: "failed", error: "MP3 bitrate must be 192 or 320 kbps" });
+        return;
+    }
+
     const formatId = qualitySelect.value;
-    if (!formatId || loadedFormatsUrl !== url) {
+    if (!audioOnly && (!formatId || loadedFormatsUrl !== url)) {
         setStatus({ status: "failed", error: "Load qualities and choose one option before downloading" });
         return;
     }
 
-    setStatus({ status: "queued", message: "Sending download request..." });
+    setStatus({
+        status: "queued",
+        audio_only: audioOnly,
+        message: audioOnly ? "Sending audio extraction request..." : "Sending download request...",
+    });
     downloadBtn.disabled = true;
 
     try {
         const response = await fetch("/api/download", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, format_id: formatId }),
+            body: JSON.stringify({
+                url,
+                format_id: audioOnly ? null : formatId,
+                audio_only: audioOnly,
+                audio_bitrate_kbps: audioOnly ? audioBitrateKbps : null,
+            }),
         });
 
         const data = await response.json();
@@ -285,11 +363,11 @@ form.addEventListener("submit", async (event) => {
         if (response.ok && data.task_id) {
             await pollStatus(data.task_id);
         } else {
-            downloadBtn.disabled = false;
+            updateDownloadAvailability();
         }
     } catch (error) {
         setStatus({ status: "failed", error: String(error), message: "Failed to start download" });
-        downloadBtn.disabled = false;
+        updateDownloadAvailability();
     }
 });
 
@@ -303,12 +381,19 @@ loadFormatsBtn.addEventListener("click", () => {
 urlInput.addEventListener("input", () => {
     if (urlInput.value.trim() !== loadedFormatsUrl) {
         resetFormats();
-        setFormatsStatus("URL changed. Load qualities again.");
+        if (!isAudioOnlyMode()) {
+            setFormatsStatus("URL changed. Load qualities again.");
+        }
     }
+    updateDownloadAvailability();
 });
 
 qualitySelect.addEventListener("change", () => {
-    downloadBtn.disabled = !qualitySelect.value;
+    updateDownloadAvailability();
+});
+
+audioOnlyCheckbox.addEventListener("change", () => {
+    syncAudioOnlyUiState();
 });
 
 refreshBtn.addEventListener("click", () => {
@@ -316,4 +401,6 @@ refreshBtn.addEventListener("click", () => {
 });
 
 setStatus({ status: "idle", message: "Waiting for start..." });
+syncAudioOnlyUiState();
+updateDownloadAvailability();
 loadFiles().catch((error) => setStatus({ status: "failed", error: String(error) }));

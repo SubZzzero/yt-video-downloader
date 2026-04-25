@@ -16,13 +16,20 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def create_task(url: str, format_id: str | None = None) -> str:
+def create_task(
+    url: str,
+    format_id: str | None = None,
+    audio_only: bool = False,
+    audio_bitrate_kbps: int | None = None,
+) -> str:
     task_id = str(uuid4())
     with _lock:
         _tasks[task_id] = {
             "task_id": task_id,
             "url": url,
             "format_id": format_id,
+            "audio_only": audio_only,
+            "audio_bitrate_kbps": audio_bitrate_kbps,
             "status": "queued",
             "error": None,
             "result": None,
@@ -52,11 +59,19 @@ def start_download_task(
     url: str,
     download_dir: Path,
     format_id: str | None = None,
+    audio_only: bool = False,
+    audio_bitrate_kbps: int | None = None,
 ) -> None:
     def _worker() -> None:
         _set_task(task_id, status="downloading")
         try:
-            result = download_video(video_url=url, download_dir=download_dir, format_id=format_id)
+            result = download_video(
+                video_url=url,
+                download_dir=download_dir,
+                format_id=format_id,
+                audio_only=audio_only,
+                audio_bitrate_kbps=audio_bitrate_kbps,
+            )
             _set_task(task_id, status="completed", result=result, error=None)
         except Exception as exc:  # noqa: BLE001
             _set_task(task_id, status="failed", error=str(exc), result=None)

@@ -20,16 +20,25 @@
           <button id="load-formats" type="button">Load qualities</button>
         </div>
 
-        <label for="quality">Quality (p)</label>
-        <select id="quality" name="quality" required disabled>
-          <option value="">Load qualities first</option>
-        </select>
-        <small id="formats-status" class="hint">Enter URL and load available qualities</small>
-
         <label class="checkbox-row" for="audio-only">
           <input id="audio-only" name="audio_only" type="checkbox" />
           <span>Download audio only</span>
         </label>
+
+        <label class="checkbox-row" for="playlist-mode">
+          <input id="playlist-mode" name="playlist_mode" type="checkbox" />
+          <span>Download playlist</span>
+        </label>
+
+        <small id="playlist-mode-hint" class="hint" hidden></small>
+
+        <div id="quality-group" class="quality-group">
+          <label for="quality">Quality (p)</label>
+          <select id="quality" name="quality" required disabled>
+            <option value="">Load qualities first</option>
+          </select>
+          <small id="formats-status" class="hint">Enter URL and load available qualities</small>
+        </div>
 
         <div id="audio-quality-group" class="audio-quality-group" hidden>
           <label for="audio-bitrate">MP3 quality</label>
@@ -72,6 +81,7 @@
     </section>
   </main>
 
+  <script src="/web/playlist-mode.js"></script>
   <script src="/web/app.js"></script>
 </body>
 

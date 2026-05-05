@@ -12,6 +12,7 @@ downloads/*
 
 # Project planning and internal docs (exclude from GitHub)
 AGENTS.md
+.kilo
 plans/
 docs/
 app/README.md

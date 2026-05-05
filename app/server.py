@@ -5,7 +5,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 from .downloader import list_video_formats
-from .task_manager import create_task, get_task, start_download_task
+from .task_manager import create_task, get_task, start_download_task, start_playlist_download_task
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
@@ -49,6 +49,16 @@ def _list_downloaded_files() -> list[dict[str, object]]:
     return items
 
 
+def _validate_audio_bitrate(audio_only: bool, audio_bitrate_kbps: int | None) -> int | None:
+    if audio_only and audio_bitrate_kbps not in (None, 192, 320):
+        raise ValueError("audio_bitrate_kbps must be 192 or 320 for audio-only downloads")
+
+    if not audio_only:
+        return None
+
+    return audio_bitrate_kbps
+
+
 def create_app() -> Flask:
     app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
 
@@ -70,17 +80,12 @@ def create_app() -> Flask:
 
         try:
             audio_bitrate_kbps = _parse_audio_bitrate(payload.get("audio_bitrate_kbps"))
+            audio_bitrate_kbps = _validate_audio_bitrate(audio_only=audio_only, audio_bitrate_kbps=audio_bitrate_kbps)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
         if not url:
             return jsonify({"error": "The url field is required"}), 400
-
-        if audio_only and audio_bitrate_kbps not in (None, 192, 320):
-            return jsonify({"error": "audio_bitrate_kbps must be 192 or 320 for audio-only downloads"}), 400
-
-        if not audio_only:
-            audio_bitrate_kbps = None
 
         task_id = create_task(
             url=url,
@@ -105,6 +110,46 @@ def create_app() -> Flask:
                 "audio_only": audio_only,
                 "audio_bitrate_kbps": audio_bitrate_kbps,
                 "audio_processing": "mp3_extract" if audio_only else "premiere_safe_aac_48k_stereo",
+            }
+        ), 202
+
+    @app.post("/api/playlist-download")
+    def api_playlist_download() -> object:
+        payload = request.get_json(silent=True) or {}
+        url = str(payload.get("url", "")).strip()
+        audio_only = _parse_audio_only(payload.get("audio_only"))
+
+        try:
+            audio_bitrate_kbps = _parse_audio_bitrate(payload.get("audio_bitrate_kbps"))
+            audio_bitrate_kbps = _validate_audio_bitrate(audio_only=audio_only, audio_bitrate_kbps=audio_bitrate_kbps)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        if not url:
+            return jsonify({"error": "The url field is required"}), 400
+
+        task_id = create_task(
+            url=url,
+            audio_only=audio_only,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+            task_kind="playlist",
+        )
+        start_playlist_download_task(
+            task_id=task_id,
+            url=url,
+            download_dir=DOWNLOADS_DIR,
+            audio_only=audio_only,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+        )
+
+        return jsonify(
+            {
+                "task_id": task_id,
+                "task_kind": "playlist",
+                "status": "queued",
+                "audio_only": audio_only,
+                "audio_bitrate_kbps": audio_bitrate_kbps,
+                "message": "Playlist request accepted. Preparing download...",
             }
         ), 202
 

@@ -97,6 +97,11 @@ button:hover {
     gap: 8px;
 }
 
+.quality-group {
+    display: grid;
+    gap: 8px;
+}
+
 .status-card {
     transition: border-color 0.2s ease;
 }

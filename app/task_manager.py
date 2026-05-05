@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .downloader import download_video
+from .playlist_downloader import download_playlist
 
 _tasks: dict[str, dict[str, Any]] = {}
 _lock = Lock()
@@ -21,6 +22,7 @@ def create_task(
     format_id: str | None = None,
     audio_only: bool = False,
     audio_bitrate_kbps: int | None = None,
+    task_kind: str = "single",
 ) -> str:
     task_id = str(uuid4())
     with _lock:
@@ -30,9 +32,11 @@ def create_task(
             "format_id": format_id,
             "audio_only": audio_only,
             "audio_bitrate_kbps": audio_bitrate_kbps,
+            "task_kind": task_kind,
             "status": "queued",
             "error": None,
             "result": None,
+            "message": None,
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
         }
@@ -75,5 +79,50 @@ def start_download_task(
             _set_task(task_id, status="completed", result=result, error=None)
         except Exception as exc:  # noqa: BLE001
             _set_task(task_id, status="failed", error=str(exc), result=None)
+
+    Thread(target=_worker, daemon=True).start()
+
+
+def start_playlist_download_task(
+    task_id: str,
+    url: str,
+    download_dir: Path,
+    audio_only: bool = False,
+    audio_bitrate_kbps: int | None = None,
+) -> None:
+    def _worker() -> None:
+        _set_task(
+            task_id,
+            status="downloading",
+            task_kind="playlist",
+            audio_only=audio_only,
+            message="Preparing playlist download...",
+        )
+        try:
+            result = download_playlist(
+                playlist_url=url,
+                download_dir=download_dir,
+                task_id=task_id,
+                audio_only=audio_only,
+                audio_bitrate_kbps=audio_bitrate_kbps,
+                progress_callback=lambda updates: _set_task(task_id, **updates),
+            )
+            _set_task(
+                task_id,
+                status="completed",
+                task_kind="playlist",
+                result=result,
+                error=None,
+                message=result.get("message"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _set_task(
+                task_id,
+                status="failed",
+                task_kind="playlist",
+                error=str(exc),
+                result=None,
+                message="Playlist download failed.",
+            )
 
     Thread(target=_worker, daemon=True).start()

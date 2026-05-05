@@ -1,8 +1,11 @@
 const form = document.getElementById("download-form");
 const urlInput = document.getElementById("url");
 const loadFormatsBtn = document.getElementById("load-formats");
+const qualityGroup = document.getElementById("quality-group");
 const qualitySelect = document.getElementById("quality");
 const audioOnlyCheckbox = document.getElementById("audio-only");
+const playlistModeCheckbox = document.getElementById("playlist-mode");
+const playlistModeHint = document.getElementById("playlist-mode-hint");
 const audioQualityGroup = document.getElementById("audio-quality-group");
 const audioBitrateSelect = document.getElementById("audio-bitrate");
 const formatsStatusEl = document.getElementById("formats-status");
@@ -18,15 +21,30 @@ const refreshBtn = document.getElementById("refresh-files");
 
 let pollTimer = null;
 let loadedFormatsUrl = "";
+const playlistMode = window.createPlaylistModeController({
+    checkbox: playlistModeCheckbox,
+    qualityGroup,
+    playlistHint: playlistModeHint,
+    audioOnlyCheckbox,
+});
 
 function isAudioOnlyMode() {
     return Boolean(audioOnlyCheckbox?.checked);
+}
+
+function isPlaylistMode() {
+    return Boolean(playlistMode?.isEnabled());
 }
 
 function updateDownloadAvailability() {
     const hasUrl = Boolean(urlInput.value.trim());
     if (!hasUrl) {
         downloadBtn.disabled = true;
+        return;
+    }
+
+    if (isPlaylistMode()) {
+        downloadBtn.disabled = false;
         return;
     }
 
@@ -40,13 +58,16 @@ function updateDownloadAvailability() {
 
 function syncAudioOnlyUiState() {
     const audioOnly = isAudioOnlyMode();
+    const playlistModeEnabled = isPlaylistMode();
     audioQualityGroup.hidden = !audioOnly;
 
-    qualitySelect.required = !audioOnly;
-    qualitySelect.disabled = audioOnly || qualitySelect.options.length <= 1;
-    loadFormatsBtn.disabled = audioOnly;
+    qualitySelect.required = !audioOnly && !playlistModeEnabled;
+    qualitySelect.disabled = audioOnly || playlistModeEnabled || qualitySelect.options.length <= 1;
+    loadFormatsBtn.disabled = audioOnly || playlistModeEnabled;
 
-    if (audioOnly) {
+    if (playlistModeEnabled) {
+        setFormatsStatus("Playlist mode bypasses per-video quality selection.");
+    } else if (audioOnly) {
         setFormatsStatus("Audio-only mode enabled. Video quality selection is not required.");
     } else if (loadedFormatsUrl === urlInput.value.trim() && qualitySelect.options.length > 1) {
         setFormatsStatus(`Loaded ${qualitySelect.options.length - 1} quality options`);
@@ -74,7 +95,62 @@ function mapStatus(payload) {
     const status = String(payload?.status || "").toLowerCase();
     const hasError = Boolean(payload?.error);
     const explicitMessage = String(payload?.message || "").trim();
+    const taskKind = String(payload?.task_kind || payload?.result?.task_kind || "single").toLowerCase();
     const audioOnly = Boolean(payload?.audio_only || payload?.result?.audio_only);
+
+    if (taskKind === "playlist") {
+        const playlistTitle = String(payload?.playlist_title || payload?.result?.playlist_title || "playlist").trim() || "playlist";
+        const itemsCompleted = Number(payload?.items_completed ?? payload?.result?.downloaded_count ?? 0);
+        const itemsTotal = Number(payload?.items_total ?? payload?.result?.items_total ?? 0);
+        const failedCount = Number(payload?.result?.failed_count ?? 0);
+
+        if (status === "queued") {
+            return {
+                state: "queued",
+                phase: "Queued",
+                message: explicitMessage || "Playlist request accepted. Preparing download...",
+                loading: true,
+            };
+        }
+
+        if (status === "downloading") {
+            return {
+                state: "downloading",
+                phase: "Downloading",
+                message: explicitMessage || `Downloading playlist: ${playlistTitle}`,
+                loading: true,
+            };
+        }
+
+        if (status === "completed") {
+            return {
+                state: "completed",
+                phase: "Completed",
+                message: explicitMessage || (
+                    failedCount > 0
+                        ? `Saved ${itemsCompleted} playlist item(s) from ${playlistTitle} with ${failedCount} failure(s).`
+                        : `Saved ${itemsCompleted} playlist item(s) from ${playlistTitle}.`
+                ),
+                loading: false,
+            };
+        }
+
+        if (status === "failed" || hasError) {
+            return {
+                state: "failed",
+                phase: "Failed",
+                message: payload?.error || explicitMessage || "Playlist download failed.",
+                loading: false,
+            };
+        }
+
+        return {
+            state: "idle",
+            phase: "Idle",
+            message: explicitMessage || `Waiting to start playlist download for ${playlistTitle}.`,
+            loading: false,
+        };
+    }
 
     if (status === "queued") {
         return {
@@ -159,6 +235,13 @@ function setStatus(data) {
     if (payload.task_id) {
         meta.push(`Task: ${payload.task_id}`);
     }
+    if (String(payload?.task_kind || payload?.result?.task_kind || "") === "playlist") {
+        const completed = Number(payload?.items_completed ?? payload?.result?.downloaded_count ?? 0);
+        const total = Number(payload?.items_total ?? payload?.result?.items_total ?? 0);
+        if (total > 0) {
+            meta.push(`Items: ${completed}/${total}`);
+        }
+    }
     const updated = formatTime(payload.updated_at || payload.created_at);
     if (updated) {
         meta.push(`Updated: ${updated}`);
@@ -211,6 +294,11 @@ function resetFormats() {
 }
 
 async function loadFormats() {
+    if (isPlaylistMode()) {
+        setFormatsStatus("Playlist mode bypasses per-video quality selection.");
+        return;
+    }
+
     if (isAudioOnlyMode()) {
         setFormatsStatus("Audio-only mode enabled. Video quality selection is not required.");
         return;
@@ -265,7 +353,7 @@ async function loadFormats() {
         setFormatsStatus(String(error), true);
         setStatus({ error: String(error) });
     } finally {
-        loadFormatsBtn.disabled = isAudioOnlyMode();
+        loadFormatsBtn.disabled = isAudioOnlyMode() || isPlaylistMode();
     }
 }
 
@@ -321,6 +409,7 @@ form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const url = urlInput.value.trim();
     const audioOnly = isAudioOnlyMode();
+    const playlistModeEnabled = isPlaylistMode();
     if (!url) {
         setStatus({ status: "failed", error: "Enter a URL" });
         return;
@@ -333,25 +422,28 @@ form.addEventListener("submit", async (event) => {
     }
 
     const formatId = qualitySelect.value;
-    if (!audioOnly && (!formatId || loadedFormatsUrl !== url)) {
+    if (!playlistModeEnabled && !audioOnly && (!formatId || loadedFormatsUrl !== url)) {
         setStatus({ status: "failed", error: "Load qualities and choose one option before downloading" });
         return;
     }
 
     setStatus({
         status: "queued",
+        task_kind: playlistModeEnabled ? "playlist" : "single",
         audio_only: audioOnly,
-        message: audioOnly ? "Sending audio extraction request..." : "Sending download request...",
+        message: playlistModeEnabled
+            ? (audioOnly ? "Sending playlist audio extraction request..." : "Sending playlist download request...")
+            : (audioOnly ? "Sending audio extraction request..." : "Sending download request..."),
     });
     downloadBtn.disabled = true;
 
     try {
-        const response = await fetch("/api/download", {
+        const response = await fetch(playlistModeEnabled ? "/api/playlist-download" : "/api/download", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 url,
-                format_id: audioOnly ? null : formatId,
+                format_id: playlistModeEnabled || audioOnly ? null : formatId,
                 audio_only: audioOnly,
                 audio_bitrate_kbps: audioOnly ? audioBitrateKbps : null,
             }),
@@ -396,11 +488,16 @@ audioOnlyCheckbox.addEventListener("change", () => {
     syncAudioOnlyUiState();
 });
 
+playlistMode.subscribe(() => {
+    syncAudioOnlyUiState();
+});
+
 refreshBtn.addEventListener("click", () => {
     loadFiles().catch((error) => setStatus({ status: "failed", error: String(error) }));
 });
 
 setStatus({ status: "idle", message: "Waiting for start..." });
+playlistMode.apply();
 syncAudioOnlyUiState();
 updateDownloadAvailability();
 loadFiles().catch((error) => setStatus({ status: "failed", error: String(error) }));

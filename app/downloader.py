@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 from typing import Any
 
@@ -9,6 +12,189 @@ from yt_dlp.utils import DownloadError
 
 
 ALLOWED_AUDIO_BITRATES = {192, 320}
+AUTO_COOKIE_BROWSERS = ("firefox", "chrome", "chromium", "edge", "brave", "vivaldi", "opera")
+JS_RUNTIME_COMMANDS = {
+    "deno": "deno",
+    "node": "node",
+    "bun": "bun",
+    "quickjs": "qjs",
+}
+AGE_OR_LOGIN_HINT = (
+    "This video requires age verification or login. Sign in with an account that has access "
+    "in Firefox, Chrome, Chromium, Edge, Brave, Vivaldi, or Opera, or configure "
+    "YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER manually."
+)
+
+
+def build_yt_dlp_cookie_options() -> dict[str, Any]:
+    """Return explicit yt-dlp cookie settings from local environment variables."""
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+    if cookies_file:
+        cookie_path = Path(cookies_file).expanduser()
+        if not cookie_path.is_file() or not os.access(cookie_path, os.R_OK):
+            raise RuntimeError("Configured YTDLP_COOKIES_FILE does not point to a readable cookies file.")
+        return {"cookiefile": str(cookie_path)}
+
+    browser_value = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if not browser_value:
+        return {}
+
+    browser_parts = [part.strip() for part in browser_value.split(":", 1)]
+    browser = browser_parts[0]
+    if not browser:
+        raise RuntimeError("Configured YTDLP_COOKIES_FROM_BROWSER must include a browser name.")
+
+    if len(browser_parts) == 2 and browser_parts[1]:
+        return {"cookiesfrombrowser": (browser, browser_parts[1])}
+
+    return {"cookiesfrombrowser": (browser,)}
+
+
+def build_yt_dlp_runtime_options() -> dict[str, Any]:
+    """Enable installed JavaScript runtimes so YouTube challenge solving can work."""
+    runtimes = {name: {} for name, command in JS_RUNTIME_COMMANDS.items() if shutil.which(command)}
+    if not runtimes:
+        return {}
+
+    return {
+        "js_runtimes": runtimes,
+        "remote_components": ["ejs:github"],
+    }
+
+
+def is_age_or_login_error(message: str) -> bool:
+    """Return whether yt-dlp failed because authenticated access is required."""
+    normalized = message.lower()
+    age_or_login_markers = (
+        "age-restricted",
+        "age restricted",
+        "age verification",
+        "confirm your age",
+        "sign in to confirm your age",
+        "sign in to confirm",
+        "login required",
+        "please log in",
+        "private video",
+    )
+    return any(marker in normalized for marker in age_or_login_markers)
+
+
+def is_requested_format_error(message: str) -> bool:
+    normalized = message.lower()
+    return "requested format" in normalized and "not available" in normalized
+
+
+def is_browser_cookie_error(message: str) -> bool:
+    normalized = message.lower()
+    cookie_error_markers = (
+        "could not find",
+        "cookies database",
+        "cookie database",
+        "secretstorage",
+        "keyring",
+        "browser profile",
+        "profile directory",
+        "permission denied",
+        "unsupported browser",
+    )
+    return "cookie" in normalized or any(marker in normalized for marker in cookie_error_markers)
+
+
+def format_yt_dlp_error(message: str) -> str:
+    """Convert common yt-dlp failures into concise user-facing messages."""
+    normalized = message.lower()
+    if is_age_or_login_error(message):
+        return AGE_OR_LOGIN_HINT
+
+    if "cookies" in normalized and "browser" in normalized:
+        return f"{message}. Check YTDLP_COOKIES_FROM_BROWSER or use YTDLP_COOKIES_FILE instead."
+
+    return message
+
+
+def _safe_error_detail(error: Exception | str) -> str:
+    """Return a short diagnostic line without exposing full local paths."""
+    message = str(error).strip()
+    if not message:
+        return "no details"
+
+    home = str(Path.home())
+    if home and home in message:
+        message = message.replace(home, "~")
+
+    message = re.sub(r"\x1b\[[0-9;]*m", "", message)
+
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    detail = lines[-1] if lines else message
+    return detail[:220]
+
+
+def _age_or_login_hint_with_attempts(attempt_errors: list[tuple[str, str]]) -> str:
+    if not attempt_errors:
+        return AGE_OR_LOGIN_HINT
+
+    attempts = "; ".join(f"{browser}: {detail}" for browser, detail in attempt_errors)
+    return (
+        f"{AGE_OR_LOGIN_HINT} Automatic browser cookie attempts failed: {attempts}. "
+        "If you are logged in, close the browser completely and retry, or set "
+        "YTDLP_COOKIES_FROM_BROWSER to the exact browser/profile."
+    )
+
+
+def extract_info_with_cookie_fallback(
+    video_url: str,
+    ydl_opts: dict[str, Any],
+    download: bool,
+) -> tuple[dict[str, Any], str | None]:
+    """Extract info, retrying age/login failures with local browser cookies."""
+    ydl_opts = {**build_yt_dlp_runtime_options(), **ydl_opts}
+    explicit_cookie_opts = build_yt_dlp_cookie_options()
+    if explicit_cookie_opts:
+        attempt_opts = {**ydl_opts, **explicit_cookie_opts}
+        try:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                info = ydl.extract_info(video_url, download=download)
+                prepared_name = ydl.prepare_filename(info) if download else None
+        except DownloadError as exc:
+            message = str(exc)
+            if "ffmpeg" in message.lower():
+                raise
+            raise RuntimeError(format_yt_dlp_error(message)) from exc
+        return info, prepared_name
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=download)
+            prepared_name = ydl.prepare_filename(info) if download else None
+        return info, prepared_name
+    except DownloadError as exc:
+        first_error = str(exc)
+        if "ffmpeg" in first_error.lower():
+            raise
+        if not is_age_or_login_error(first_error):
+            raise RuntimeError(format_yt_dlp_error(first_error)) from exc
+
+    attempt_errors: list[tuple[str, str]] = []
+    for browser in AUTO_COOKIE_BROWSERS:
+        attempt_opts = {**ydl_opts, "cookiesfrombrowser": (browser,)}
+        try:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                info = ydl.extract_info(video_url, download=download)
+                prepared_name = ydl.prepare_filename(info) if download else None
+            return info, prepared_name
+        except DownloadError as exc:
+            message = str(exc)
+            if "ffmpeg" in message.lower():
+                raise
+            if is_age_or_login_error(message) or is_browser_cookie_error(message):
+                attempt_errors.append((browser, _safe_error_detail(exc)))
+                continue
+            raise RuntimeError(format_yt_dlp_error(message)) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            attempt_errors.append((browser, _safe_error_detail(exc)))
+            continue
+
+    raise RuntimeError(_age_or_login_hint_with_attempts(attempt_errors))
 
 
 def list_video_formats(video_url: str) -> dict[str, Any]:
@@ -17,13 +203,14 @@ def list_video_formats(video_url: str) -> dict[str, Any]:
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "simulate": "list_only",
         "skip_download": True,
     }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
+    info, _ = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=ydl_opts, download=False)
 
     raw_formats = info.get("formats") or []
+    if not raw_formats:
+        raise RuntimeError("No downloadable formats were returned for this video, even after authentication.")
 
     def collect_candidates(video_only: bool) -> dict[int, tuple[tuple[float, float, float], dict[str, Any]]]:
         selected_by_height: dict[int, tuple[tuple[float, float, float], dict[str, Any]]] = {}
@@ -243,16 +430,13 @@ def _download_audio_track(video_url: str, download_dir: Path, audio_bitrate_kbps
             }
         ],
     }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            prepared_name = ydl.prepare_filename(info)
+        info, prepared_name = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=ydl_opts, download=True)
     except DownloadError as exc:
         message = str(exc)
         if "ffmpeg" in message.lower():
             raise RuntimeError("FFmpeg is required for MP3 conversion. Install ffmpeg and retry.") from exc
-        raise RuntimeError(message) from exc
+        raise RuntimeError(format_yt_dlp_error(message)) from exc
 
     resolved_path = _resolve_downloaded_file(info=info, prepared_name=prepared_name, download_dir=download_dir)
     mp3_path = _resolve_audio_track_file(info=info, fallback_path=resolved_path, download_dir=download_dir)
@@ -302,16 +486,23 @@ def download_video(
         "no_warnings": True,
         "restrictfilenames": False,
     }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            prepared_name = ydl.prepare_filename(info)
+        info, prepared_name = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=ydl_opts, download=True)
     except DownloadError as exc:
         message = str(exc)
         if "ffmpeg" in message.lower():
             raise RuntimeError("FFmpeg is required for selected quality. Install ffmpeg and retry.") from exc
-        raise RuntimeError(message) from exc
+        raise RuntimeError(format_yt_dlp_error(message)) from exc
+    except RuntimeError as exc:
+        if not format_id or not is_requested_format_error(str(exc)):
+            raise
+
+        fallback_opts = {**ydl_opts, "format": "bestvideo+bestaudio/best"}
+        info, prepared_name = extract_info_with_cookie_fallback(
+            video_url=video_url,
+            ydl_opts=fallback_opts,
+            download=True,
+        )
 
     file_path = _resolve_downloaded_file(info=info, prepared_name=prepared_name, download_dir=download_dir)
     normalized = _apply_premiere_safe_audio(file_path=file_path)

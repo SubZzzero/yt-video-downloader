@@ -5,8 +5,9 @@ import shutil
 import subprocess
 from typing import Any, Callable
 
-import yt_dlp
 from yt_dlp.utils import DownloadError
+
+from .downloader import extract_info_with_cookie_fallback, format_yt_dlp_error
 
 
 ALLOWED_AUDIO_BITRATES = {192, 320}
@@ -86,9 +87,7 @@ def _collect_playlist_metadata(playlist_url: str) -> dict[str, Any]:
         "no_warnings": True,
         "skip_download": True,
     }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(playlist_url, download=False)
+    info, _ = extract_info_with_cookie_fallback(video_url=playlist_url, ydl_opts=ydl_opts, download=False)
 
     entries = [entry for entry in (info.get("entries") or []) if entry]
     if info.get("_type") != "playlist" or not entries:
@@ -217,7 +216,6 @@ def download_playlist(
             "restrictfilenames": False,
             "progress_hooks": [progress_hook],
         }
-
         if audio_only:
             ydl_opts["format"] = "bestaudio/best"
             ydl_opts["postprocessors"] = [
@@ -233,15 +231,14 @@ def download_playlist(
             ydl_opts["merge_output_format"] = "mp4"
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(playlist_url, download=True)
+            extract_info_with_cookie_fallback(video_url=playlist_url, ydl_opts=ydl_opts, download=True)
         except DownloadError as exc:
             message = str(exc)
             if "ffmpeg" in message.lower():
                 if audio_only:
                     raise RuntimeError("FFmpeg is required for playlist MP3 conversion. Install ffmpeg and retry.") from exc
                 raise RuntimeError("FFmpeg is required for playlist video merging. Install ffmpeg and retry.") from exc
-            raise RuntimeError(f"Playlist download failed: {message}") from exc
+            raise RuntimeError(f"Playlist download failed: {format_yt_dlp_error(message)}") from exc
 
         staged_files = sorted(
             path

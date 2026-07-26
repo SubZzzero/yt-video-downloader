@@ -10,6 +10,11 @@ __pycache__/
 # Runtime download artifacts
 downloads/*
 
+# Local authentication cookies for yt-dlp
+cookies.txt
+*.cookies.txt
+*.cookies
+
 # Project planning and internal docs (exclude from GitHub)
 AGENTS.md
 .kilo

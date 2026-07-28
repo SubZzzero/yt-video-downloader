@@ -9,6 +9,7 @@ Download YouTube videos in your browser by URL with selectable quality and best 
 - Web page with a URL field and download button
 - Dynamic quality selection by available resolutions (e.g. 360p, 720p, 1080p)
 - Download of selected video quality with best available audio track
+- Age-restricted video downloads via browser cookies when already logged in with an account that has access; tested only on Linux
 - Playlist support: full videos or audio-only MP3 downloads
 - Audio-only MP3 download with selectable bitrate `192` or `320 kbps`
 - API for starting downloads and checking status

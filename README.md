@@ -110,7 +110,7 @@ http://127.0.0.1:5000
 
 The app does not bypass age checks. For videos that require login or age verification, it first tries the normal public download path. If YouTube asks for login or age verification, the backend automatically tries cookies from local browser profiles in this order: Firefox, Chrome, Chromium, Edge, Brave, Vivaldi, Opera.
 
-This works on Linux, macOS, and Windows as long as `yt-dlp` can read cookies from a browser where you are already logged in with an account that has access.
+This behavior has only been tested on Linux. Compatibility with macOS and Windows is currently unknown and depends on whether `yt-dlp` can read cookies from a browser where you are already logged in with an account that has access.
 
 Normal startup does not change:
 

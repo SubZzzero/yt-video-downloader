@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import time
 from typing import Any
 
 import yt_dlp
@@ -13,6 +14,10 @@ from yt_dlp.utils import DownloadError
 
 ALLOWED_AUDIO_BITRATES = {192, 320}
 AUTO_COOKIE_BROWSERS = ("firefox", "chrome", "chromium", "edge", "brave", "vivaldi", "opera")
+DOWNLOAD_TEMPLATE = "%(title).150B [%(id)s].%(ext)s"
+TEMP_DOWNLOAD_DIR_NAME = ".tmp"
+STALE_ARTIFACT_MAX_AGE_SECONDS = 24 * 60 * 60
+TEMP_FILE_SUFFIXES = {".part", ".ytdl", ".temp"}
 JS_RUNTIME_COMMANDS = {
     "deno": "deno",
     "node": "node",
@@ -24,6 +29,65 @@ AGE_OR_LOGIN_HINT = (
     "in Firefox, Chrome, Chromium, Edge, Brave, Vivaldi, or Opera, or configure "
     "YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER manually."
 )
+YOUTUBE_CLIENT_TROUBLESHOOTING_HINT = (
+    "YouTube rejected this request, commonly due to 403/bot-check/PO-token enforcement. "
+    "Update yt-dlp, keep Node.js/Deno available for challenge solving, and if it repeats install "
+    "the optional bgutil-ytdlp-pot-provider and configure yt-dlp for the mweb client. Use cookies "
+    "only for content that actually requires an account."
+)
+
+
+def cleanup_stale_download_artifacts(download_dir: Path, max_age_seconds: int = STALE_ARTIFACT_MAX_AGE_SECONDS) -> None:
+    """Remove old hidden yt-dlp staging artifacts without touching finished user files."""
+    download_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = download_dir / TEMP_DOWNLOAD_DIR_NAME
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - max_age_seconds
+
+    for item in sorted(temp_dir.rglob("*"), reverse=True):
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+        if stat.st_mtime >= cutoff:
+            continue
+        if item.is_dir():
+            shutil.rmtree(item, ignore_errors=True)
+        elif item.is_file():
+            item.unlink(missing_ok=True)
+
+    for item in download_dir.iterdir():
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+
+        if stat.st_mtime >= cutoff:
+            continue
+
+        if item.is_dir() and (item.name.startswith(".playlist_") or item.name == TEMP_DOWNLOAD_DIR_NAME):
+            shutil.rmtree(item, ignore_errors=True)
+            if item.name == TEMP_DOWNLOAD_DIR_NAME:
+                item.mkdir(parents=True, exist_ok=True)
+            continue
+
+        if item.is_file() and item.suffix.lower() in TEMP_FILE_SUFFIXES:
+            item.unlink(missing_ok=True)
+
+
+def build_yt_dlp_download_options(download_dir: Path, *, template: str = DOWNLOAD_TEMPLATE) -> dict[str, Any]:
+    """Return shared yt-dlp download options with isolated temp storage."""
+    temp_dir = download_dir / TEMP_DOWNLOAD_DIR_NAME
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "paths": {"home": str(download_dir), "temp": str(temp_dir)},
+        "outtmpl": template,
+        "retries": 10,
+        "fragment_retries": 10,
+        "socket_timeout": 30,
+        "continuedl": True,
+        "restrictfilenames": False,
+    }
 
 
 def build_yt_dlp_cookie_options() -> dict[str, Any]:
@@ -100,14 +164,38 @@ def is_browser_cookie_error(message: str) -> bool:
     return "cookie" in normalized or any(marker in normalized for marker in cookie_error_markers)
 
 
+def is_youtube_client_error(message: str) -> bool:
+    normalized = message.lower()
+    markers = (
+        "http error 403",
+        "403 forbidden",
+        "sign in to confirm you're not a bot",
+        "not a bot",
+        "po token",
+        "pot token",
+        "gvs",
+        "nsig",
+        "signature",
+        "unable to download video data",
+        "this content isn't available, try again later",
+    )
+    return any(marker in normalized for marker in markers)
+
+
 def format_yt_dlp_error(message: str) -> str:
     """Convert common yt-dlp failures into concise user-facing messages."""
     normalized = message.lower()
     if is_age_or_login_error(message):
         return AGE_OR_LOGIN_HINT
 
+    if is_youtube_client_error(message):
+        return YOUTUBE_CLIENT_TROUBLESHOOTING_HINT
+
     if "cookies" in normalized and "browser" in normalized:
-        return f"{message}. Check YTDLP_COOKIES_FROM_BROWSER or use YTDLP_COOKIES_FILE instead."
+        return (
+            f"{message}. Check YTDLP_COOKIES_FROM_BROWSER or use YTDLP_COOKIES_FILE instead. "
+            "Browser cookies can rotate or be locked by a running browser; an exported cookies file is often more stable."
+        )
 
     return message
 
@@ -212,16 +300,23 @@ def list_video_formats(video_url: str) -> dict[str, Any]:
     if not raw_formats:
         raise RuntimeError("No downloadable formats were returned for this video, even after authentication.")
 
-    def collect_candidates(video_only: bool) -> dict[int, tuple[tuple[float, float, float], dict[str, Any]]]:
-        selected_by_height: dict[int, tuple[tuple[float, float, float], dict[str, Any]]] = {}
+    def is_mp4_safe_format(item: dict[str, Any], ext: str, vcodec: str, acodec: str) -> bool:
+        return (
+            ext == "mp4"
+            and (vcodec.startswith("avc1") or vcodec.startswith("h264"))
+            and (acodec == "none" or acodec.startswith("mp4a") or acodec.startswith("aac"))
+        )
+
+    def collect_candidates(video_only: bool) -> dict[int, tuple[tuple[float, float, float, float], dict[str, Any]]]:
+        selected_by_height: dict[int, tuple[tuple[float, float, float, float], dict[str, Any]]] = {}
 
         for item in raw_formats:
             format_id = str(item.get("format_id") or "").strip()
             if not format_id:
                 continue
 
-            vcodec = str(item.get("vcodec") or "none")
-            acodec = str(item.get("acodec") or "none")
+            vcodec = str(item.get("vcodec") or "none").lower()
+            acodec = str(item.get("acodec") or "none").lower()
             if vcodec == "none":
                 continue
             if video_only and acodec != "none":
@@ -241,19 +336,31 @@ def list_video_formats(video_url: str) -> dict[str, Any]:
             filesize_int = int(filesize) if isinstance(filesize, (int, float)) else None
             note = str(item.get("format_note") or item.get("format") or "").strip()
 
+            ext = str(item.get("ext") or "").strip().lower()
+            container = str(item.get("container") or ext).strip().lower()
+            mp4_safe = is_mp4_safe_format(item, ext=ext, vcodec=vcodec, acodec=acodec)
+            has_audio = acodec != "none"
             normalized = {
                 "format_id": format_id,
                 "quality": f"{height}p",
                 "height": height,
                 "resolution": f"{height}p",
-                "ext": str(item.get("ext") or "").strip(),
+                "ext": ext,
                 "fps": fps,
                 "filesize": filesize_int,
                 "note": note,
-                "has_audio": acodec != "none",
+                "has_audio": has_audio,
+                "vcodec": vcodec,
+                "acodec": acodec,
+                "container": container,
+                "mp4_safe": mp4_safe,
+                "needs_merge": not has_audio,
+                "compatibility_note": "MP4-safe" if mp4_safe else "may save as MKV",
+                "recommended": False,
             }
 
             rank = (
+                1.0 if mp4_safe else 0.0,
                 float(fps or 0),
                 tbr,
                 float(filesize_int or 0),
@@ -277,6 +384,10 @@ def list_video_formats(video_url: str) -> dict[str, Any]:
         )
     ]
 
+    recommended = next((item for item in ranked_formats if item["mp4_safe"]), ranked_formats[0] if ranked_formats else None)
+    if recommended:
+        recommended["recommended"] = True
+
     return {
         "id": info.get("id"),
         "title": info.get("title"),
@@ -299,6 +410,10 @@ def _resolve_downloaded_file(info: dict[str, Any], prepared_name: str, download_
         candidate_path = Path(str(candidate))
         if candidate_path.exists():
             return candidate_path
+        if not candidate_path.is_absolute():
+            download_candidate = download_dir / candidate_path
+            if download_candidate.exists():
+                return download_candidate
 
     prepared_path = Path(prepared_name)
     ext = str(info.get("ext") or "").strip()
@@ -307,23 +422,56 @@ def _resolve_downloaded_file(info: dict[str, Any], prepared_name: str, download_
         if with_info_ext.exists():
             return with_info_ext
 
-    files = [item for item in download_dir.iterdir() if item.is_file()]
+    files = [item for item in download_dir.iterdir() if item.is_file() and item.suffix.lower() not in TEMP_FILE_SUFFIXES]
     video_id = str(info.get("id") or "").strip()
     if video_id:
         by_id = [item for item in files if f"[{video_id}]" in item.name]
         if by_id:
             return sorted(by_id, key=lambda path: path.stat().st_mtime, reverse=True)[0]
 
-    if files:
-        return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)[0]
-
     raise RuntimeError("Downloaded file was not found after yt-dlp completed")
 
 
+def _probe_video_codec(file_path: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+
+    if result.returncode != 0:
+        return None
+    codec = (result.stdout or "").splitlines()[0].strip().lower() if result.stdout else ""
+    return codec or None
+
+
+def _is_mp4_copy_compatible_file(file_path: Path) -> bool:
+    codec = _probe_video_codec(file_path)
+    return codec in {"h264"}
+
+
 def _apply_premiere_safe_audio(file_path: Path) -> dict[str, Any]:
-    """Normalize audio for NLE compatibility: AAC LC, 48 kHz, stereo in MP4."""
-    final_path = file_path.with_suffix(".mp4")
-    temp_path = final_path.with_name(f"{final_path.stem}.premiere_safe.mp4")
+    """Normalize audio without transcoding video; use MP4 only when stream copy is safe."""
+    mp4_compatible = _is_mp4_copy_compatible_file(file_path)
+    final_suffix = ".mp4" if mp4_compatible else ".mkv"
+    final_path = file_path.with_suffix(final_suffix)
+    temp_path = final_path.with_name(f"{final_path.stem}.premiere_safe{final_suffix}")
 
     ffmpeg_command = [
         "ffmpeg",
@@ -344,10 +492,10 @@ def _apply_premiere_safe_audio(file_path: Path) -> dict[str, Any]:
         "48000",
         "-ac",
         "2",
-        "-movflags",
-        "+faststart",
-        str(temp_path),
     ]
+    if mp4_compatible:
+        ffmpeg_command.extend(["-movflags", "+faststart"])
+    ffmpeg_command.append(str(temp_path))
 
     try:
         result = subprocess.run(
@@ -375,7 +523,8 @@ def _apply_premiere_safe_audio(file_path: Path) -> dict[str, Any]:
     return {
         "file_path": str(final_path.resolve()),
         "file_name": final_path.name,
-        "premiere_safe_audio": True,
+        "premiere_safe_audio": mp4_compatible,
+        "audio_normalized": True,
         "audio_codec": "aac",
         "audio_profile": "aac_low",
         "audio_sample_rate": 48000,
@@ -411,17 +560,41 @@ def _normalize_audio_bitrate(audio_bitrate_kbps: int | None) -> int:
     return bitrate
 
 
+def _safe_video_format_selector() -> str:
+    return "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
+
+def _build_selected_format_selector(video_url: str, format_id: str) -> str:
+    """Avoid adding a second audio stream when the selected format is progressive."""
+    ydl_opts: dict[str, Any] = {
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "simulate": "list_only",
+        "skip_download": True,
+    }
+    info, _ = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=ydl_opts, download=False)
+    for item in info.get("formats") or []:
+        if str(item.get("format_id") or "").strip() != format_id:
+            continue
+        acodec = str(item.get("acodec") or "none").lower()
+        if acodec != "none":
+            return f"{format_id}/best"
+        return f"{format_id}+bestaudio/best"
+
+    return f"{format_id}+bestaudio/{format_id}/best"
+
+
 def _download_audio_track(video_url: str, download_dir: Path, audio_bitrate_kbps: int | None) -> dict[str, Any]:
     """Download best available audio and convert to MP3."""
     bitrate = _normalize_audio_bitrate(audio_bitrate_kbps)
 
     ydl_opts: dict[str, Any] = {
-        "outtmpl": str(download_dir / "%(title).150B [%(id)s].%(ext)s"),
+        **build_yt_dlp_download_options(download_dir),
         "format": "bestaudio/best",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "restrictfilenames": False,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -463,6 +636,7 @@ def download_video(
 ) -> dict[str, Any]:
     """Download a single video and prefer selected quality + best available audio."""
     download_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_stale_download_artifacts(download_dir)
 
     if audio_only:
         return _download_audio_track(
@@ -471,20 +645,15 @@ def download_video(
             audio_bitrate_kbps=audio_bitrate_kbps,
         )
 
-    selected_format = (
-        f"{format_id}+bestaudio/{format_id}/best"
-        if format_id
-        else "bestvideo+bestaudio/best"
-    )
+    selected_format = _build_selected_format_selector(video_url, format_id) if format_id else _safe_video_format_selector()
 
     ydl_opts: dict[str, Any] = {
-        "outtmpl": str(download_dir / "%(title).150B [%(id)s].%(ext)s"),
+        **build_yt_dlp_download_options(download_dir),
         "format": selected_format,
-        "merge_output_format": "mp4",
+        "merge_output_format": "mkv",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "restrictfilenames": False,
     }
     try:
         info, prepared_name = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=ydl_opts, download=True)
@@ -497,7 +666,7 @@ def download_video(
         if not format_id or not is_requested_format_error(str(exc)):
             raise
 
-        fallback_opts = {**ydl_opts, "format": "bestvideo+bestaudio/best"}
+        fallback_opts = {**ydl_opts, "format": _safe_video_format_selector()}
         info, prepared_name = extract_info_with_cookie_fallback(
             video_url=video_url,
             ydl_opts=fallback_opts,
@@ -505,7 +674,15 @@ def download_video(
         )
 
     file_path = _resolve_downloaded_file(info=info, prepared_name=prepared_name, download_dir=download_dir)
-    normalized = _apply_premiere_safe_audio(file_path=file_path)
+    try:
+        normalized = _apply_premiere_safe_audio(file_path=file_path)
+    except RuntimeError:
+        if not format_id:
+            raise
+        fallback_opts = {**ydl_opts, "format": _safe_video_format_selector()}
+        info, prepared_name = extract_info_with_cookie_fallback(video_url=video_url, ydl_opts=fallback_opts, download=True)
+        file_path = _resolve_downloaded_file(info=info, prepared_name=prepared_name, download_dir=download_dir)
+        normalized = _apply_premiere_safe_audio(file_path=file_path)
 
     return {
         "id": info.get("id"),
@@ -515,6 +692,7 @@ def download_video(
         "file_name": normalized["file_name"],
         "format_id": info.get("format_id") or format_id,
         "premiere_safe_audio": normalized["premiere_safe_audio"],
+        "audio_normalized": normalized["audio_normalized"],
         "audio_codec": normalized["audio_codec"],
         "audio_profile": normalized["audio_profile"],
         "audio_sample_rate": normalized["audio_sample_rate"],

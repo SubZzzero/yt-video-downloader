@@ -187,13 +187,14 @@ function mapStatus(payload) {
         }
 
         const premiereSafe = Boolean(payload?.result?.premiere_safe_audio);
+        const audioNormalized = Boolean(payload?.result?.audio_normalized);
         const codec = String(payload?.result?.audio_codec || "").toUpperCase();
         const sampleRate = payload?.result?.audio_sample_rate;
         const channels = payload?.result?.audio_channels;
 
         const compatNote = premiereSafe
             ? ` Premiere-safe audio: ${codec || "AAC"}${sampleRate ? ` ${sampleRate}Hz` : ""}${channels ? ` ${channels}ch` : ""}.`
-            : "";
+            : (audioNormalized ? " Audio normalized; saved in MKV because MP4 stream-copy was not safe." : "");
 
         return {
             state: "completed",
@@ -273,6 +274,13 @@ function formatLabel(format) {
     if (format.ext) {
         parts.push(String(format.ext).toUpperCase());
     }
+    if (format.compatibility_note) {
+        parts.push(format.compatibility_note);
+    } else if (format.mp4_safe === true) {
+        parts.push("MP4-safe");
+    } else if (format.mp4_safe === false) {
+        parts.push("may save as MKV");
+    }
     if (format.fps) {
         parts.push(`${format.fps} fps`);
     }
@@ -336,15 +344,19 @@ async function loadFormats() {
         placeholder.textContent = "Select quality";
         qualitySelect.appendChild(placeholder);
 
-        formats.forEach((format) => {
+        let recommendedIndex = -1;
+        formats.forEach((format, index) => {
             const option = document.createElement("option");
             option.value = format.format_id;
             option.textContent = formatLabel(format);
             qualitySelect.appendChild(option);
+            if (format.recommended === true && recommendedIndex === -1) {
+                recommendedIndex = index + 1;
+            }
         });
 
         qualitySelect.disabled = false;
-        qualitySelect.selectedIndex = 1;
+        qualitySelect.selectedIndex = recommendedIndex > 0 ? recommendedIndex : 1;
         loadedFormatsUrl = url;
         setFormatsStatus(`Loaded ${formats.length} quality options`);
         updateDownloadAvailability();

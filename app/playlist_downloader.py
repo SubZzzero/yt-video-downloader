@@ -2,16 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-import subprocess
 from typing import Any, Callable
 
 from yt_dlp.utils import DownloadError
 
-from .downloader import extract_info_with_cookie_fallback, format_yt_dlp_error
+from .downloader import (
+    _apply_premiere_safe_audio,
+    build_yt_dlp_download_options,
+    cleanup_stale_download_artifacts,
+    extract_info_with_cookie_fallback,
+    format_yt_dlp_error,
+)
 
 
 ALLOWED_AUDIO_BITRATES = {192, 320}
-PLAYLIST_VIDEO_FORMAT = "bestvideo*[height<=1080]+bestaudio/best[height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+PLAYLIST_VIDEO_FORMAT = "bestvideo[height<=1080][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]"
 ProgressCallback = Callable[[dict[str, Any]], None]
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv"}
 
@@ -24,60 +29,6 @@ def _normalize_audio_bitrate(audio_bitrate_kbps: int | None) -> int:
     if bitrate not in ALLOWED_AUDIO_BITRATES:
         raise RuntimeError("Playlist audio bitrate must be 192 or 320 kbps")
     return bitrate
-
-
-def _apply_premiere_safe_audio(file_path: Path) -> Path:
-    final_path = file_path.with_suffix(".mp4")
-    temp_path = final_path.with_name(f"{final_path.stem}.premiere_safe.mp4")
-
-    ffmpeg_command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(file_path),
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0?",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-profile:a",
-        "aac_low",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
-        "-movflags",
-        "+faststart",
-        str(temp_path),
-    ]
-
-    try:
-        result = subprocess.run(
-            ffmpeg_command,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("FFmpeg is required for playlist video post-processing") from exc
-
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        details = stderr.splitlines()[-1] if stderr else "unknown ffmpeg error"
-        raise RuntimeError(f"Failed to normalize playlist video audio: {details}")
-
-    if final_path.exists() and final_path != file_path:
-        final_path.unlink()
-    temp_path.replace(final_path)
-
-    if file_path.exists() and file_path != final_path:
-        file_path.unlink()
-
-    return final_path
 
 
 def _collect_playlist_metadata(playlist_url: str) -> dict[str, Any]:
@@ -138,6 +89,7 @@ def download_playlist(
     progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     download_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_stale_download_artifacts(download_dir)
     staging_dir = download_dir / f".playlist_{task_id}"
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
@@ -208,12 +160,14 @@ def download_playlist(
             )
 
         ydl_opts: dict[str, Any] = {
-            "outtmpl": str(staging_dir / "%(playlist_index,0>3)s - %(title).150B [%(id)s].%(ext)s"),
+            **build_yt_dlp_download_options(
+                staging_dir,
+                template="%(playlist_index,0>3)s - %(title).150B [%(id)s].%(ext)s",
+            ),
             "noplaylist": False,
             "quiet": True,
             "no_warnings": True,
             "ignoreerrors": True,
-            "restrictfilenames": False,
             "progress_hooks": [progress_hook],
         }
         if audio_only:
@@ -228,7 +182,7 @@ def download_playlist(
         else:
             # Prefer 1080p when available, otherwise fall back to the best lower quality.
             ydl_opts["format"] = PLAYLIST_VIDEO_FORMAT
-            ydl_opts["merge_output_format"] = "mp4"
+            ydl_opts["merge_output_format"] = "mkv"
 
         try:
             extract_info_with_cookie_fallback(video_url=playlist_url, ydl_opts=ydl_opts, download=True)
@@ -251,7 +205,8 @@ def download_playlist(
             try:
                 processed_file = staged_file
                 if not audio_only:
-                    processed_file = _apply_premiere_safe_audio(staged_file)
+                    processed = _apply_premiere_safe_audio(staged_file)
+                    processed_file = Path(str(processed["file_path"]))
 
                 target_path = _resolve_unique_target(download_dir, processed_file.name)
                 target_path.parent.mkdir(parents=True, exist_ok=True)

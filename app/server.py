@@ -4,7 +4,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from .downloader import list_video_formats
+from .downloader import TEMP_FILE_SUFFIXES, cleanup_stale_download_artifacts, list_video_formats
 from .task_manager import create_task, get_task, start_download_task, start_playlist_download_task
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -36,6 +36,8 @@ def _list_downloaded_files() -> list[dict[str, object]]:
     for file_path in sorted(DOWNLOADS_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
         if not file_path.is_file():
             continue
+        if file_path.name.startswith(".") or file_path.suffix.lower() in TEMP_FILE_SUFFIXES:
+            continue
         stat = file_path.stat()
         items.append(
             {
@@ -60,6 +62,7 @@ def _validate_audio_bitrate(audio_only: bool, audio_bitrate_kbps: int | None) ->
 
 
 def create_app() -> Flask:
+    cleanup_stale_download_artifacts(DOWNLOADS_DIR)
     app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
 
     @app.get("/")

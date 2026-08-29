@@ -14,6 +14,18 @@ downloads/*
 cookies.txt
 *.cookies.txt
 *.cookies
+cookies.sqlite
+Cookies
+Cookies-journal
+
+# Local secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db
 
 # Project planning and internal docs (exclude from GitHub)
 AGENTS.md

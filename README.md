@@ -68,6 +68,13 @@ py -m venv .venv
 pip install -r requirements.txt
 ```
 
+If YouTube downloads start failing after previously working, update the pinned extractor dependency first:
+
+```bash
+python -m pip install -U -r requirements.txt
+python -m yt_dlp --version
+```
+
 3. Install ffmpeg.
 
 Linux (APT):
@@ -104,8 +111,25 @@ http://127.0.0.1:5000
 ## Download Flow
 1. Paste a video URL.
 2. Click **Load qualities** to fetch available formats.
-3. Select quality (`###p`) from the dropdown.
+3. Select quality (`###p`) from the dropdown. The app auto-selects a recommended MP4-safe option when available; higher VP9/AV1/WebM qualities may save as MKV to avoid slow video transcoding.
 4. Click **Download** and track status.
+
+## YouTube 403 / Bot Check / PO Token
+
+YouTube can require client challenges or PO Tokens for some requests. This depends on IP address, account, region, selected client, and YouTube rollout state, so a URL may work one day and fail later without an app change.
+
+First steps:
+
+```bash
+python -m pip install -U -r requirements.txt
+python -m yt_dlp --version
+```
+
+Keep a JavaScript runtime available for `yt-dlp` challenge solving. Node.js is the common choice, but Deno, Bun, or QuickJS can also work when installed.
+
+If errors mention `403`, bot checks, `PO Token`, `gvs`, `nsig`, or signature failures after updating, follow the upstream `yt-dlp` PO Token guidance and consider installing the optional `bgutil-ytdlp-pot-provider`. This project does not install that provider by default because it adds an extra moving part outside the local MVP.
+
+Cookies are only for content that requires an account, such as age-restricted or private videos. Cookies do not solve every 403/PO-token case, can rotate or be locked by the browser, and may increase account throttling risk when overused. Prefer an exported cookies file when browser-cookie auto-detection is unreliable.
 
 ## Age-Restricted Videos
 
